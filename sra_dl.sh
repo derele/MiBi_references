@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
-# Usage: ./sra_dl.sh <SRA_RUN_ID>
-#
-# Example:
-#   ./sra_dl.sh SRR12345678
+# Usage: ./sra_dl_clean.sh <SRA_RUN_ID>
+# Example: ./sra_dl_clean.sh DRR417191
 
 set -euo pipefail
 
@@ -13,47 +11,43 @@ set -euo pipefail
 SRA_ID="$1"
 THREADS=8
 
-# optional: where SRA files go
-SRA_DIR="${SRA_ID}/sra"
-FASTQ_DIR="${SRA_ID}/fastq"
+# directories
+BASE_DIR="${PWD}/${SRA_ID}"
+SRA_DIR="${BASE_DIR}/sra"
+FASTQ_DIR="${BASE_DIR}/fastq"
+TMP_DIR="${BASE_DIR}/tmp"
 
 ############################
 # CHECKS
 ############################
 
 if [[ -z "${SRA_ID}" ]]; then
-  echo "ERROR: No SRA accession provided"
-  exit 1
+    echo "ERROR: No SRA accession provided"
+    exit 1
 fi
 
-command -v prefetch >/dev/null || { echo "prefetch not found"; exit 1; }
-command -v fasterq-dump >/dev/null || { echo "fasterq-dump not found"; exit 1; }
-command -v repair.sh >/dev/null || { echo "repair.sh (BBTools) not found"; exit 1; }
+for cmd in prefetch fasterq-dump repair.sh pigz; do
+    command -v "$cmd" >/dev/null || { echo "ERROR: $cmd not found"; exit 1; }
+done
 
 ############################
 # SETUP
 ############################
 
-mkdir -p "${SRA_DIR}" "${FASTQ_DIR}"
-
-export TMPDIR="${PWD}/${SRA_ID}/tmp"
-mkdir -p "${TMPDIR}"
+mkdir -p "${SRA_DIR}" "${FASTQ_DIR}" "${TMP_DIR}"
+export TMPDIR="${TMP_DIR}"
 
 ############################
 # DOWNLOAD
 ############################
 
 echo "▶ Downloading ${SRA_ID} via prefetch..."
-prefetch \
-  --max-size 100G \
-  --output-directory "${SRA_DIR}" \
-  "${SRA_ID}"
+prefetch --max-size 100G --output-directory "${SRA_DIR}" "${SRA_ID}"
 
-SRA_FILE="${SRA_DIR}/${SRA_ID}.sra"
-
+SRA_FILE="${SRA_DIR}/${SRA_ID}/${SRA_ID}.sra"
 if [[ ! -s "${SRA_FILE}" ]]; then
-  echo "ERROR: ${SRA_FILE} not found or empty"
-  exit 1
+    echo "ERROR: ${SRA_FILE} not found or empty"
+    exit 1
 fi
 
 ############################
@@ -61,36 +55,46 @@ fi
 ############################
 
 echo "▶ Converting ${SRA_ID} to FASTQ..."
-
 fasterq-dump \
-  --threads "${THREADS}" \
-  --skip-technical \
-  --split-files \
-  --outdir "${FASTQ_DIR}" \
-  "${SRA_FILE}"
+    --threads "${THREADS}" \
+    --skip-technical \
+    --split-files \
+    --outdir "${FASTQ_DIR}" \
+    "${SRA_FILE}"
 
 ############################
 # REPAIR PAIRS
 ############################
 
 echo "▶ Repairing paired-end reads..."
-
 repair.sh \
-  in1="${FASTQ_DIR}/${SRA_ID}_1.fastq" \
-  in2="${FASTQ_DIR}/${SRA_ID}_2.fastq" \
-  out1="${FASTQ_DIR}/${SRA_ID}_1.repaired.fastq" \
-  out2="${FASTQ_DIR}/${SRA_ID}_2.repaired.fastq" \
-  outs="${FASTQ_DIR}/${SRA_ID}_singletons.fastq" \
-  overwrite=t
+    in1="${FASTQ_DIR}/${SRA_ID}_1.fastq" \
+    in2="${FASTQ_DIR}/${SRA_ID}_2.fastq" \
+    out1="${FASTQ_DIR}/${SRA_ID}_1.repaired.fastq" \
+    out2="${FASTQ_DIR}/${SRA_ID}_2.repaired.fastq" \
+    outs="${FASTQ_DIR}/${SRA_ID}_singletons.fastq" \
+    overwrite=t
 
+############################
+# CLEANUP INTERMEDIATE FILES
+############################
 
-echo "▶ Compressing FASTQ files..."
+echo "▶ Removing intermediate files..."
+rm -rf "${SRA_FILE}" \
+   "${FASTQ_DIR}/${SRA_ID}_1.fastq" \
+   "${FASTQ_DIR}/${SRA_ID}_2.fastq"
 
+rm -rf "${TMP_DIR}"  # temp folder
+
+############################
+# COMPRESS FINAL FASTQ
+############################
+
+echo "▶ Compressing final FASTQ files..."
 pigz -p "${THREADS}" \
-  "${FASTQ_DIR}/${SRA_ID}_1.repaired.fastq" \
-  "${FASTQ_DIR}/${SRA_ID}_2.repaired.fastq" \
-  "${FASTQ_DIR}/${SRA_ID}_singletons.fastq"
+     "${FASTQ_DIR}/${SRA_ID}_1.repaired.fastq" \
+     "${FASTQ_DIR}/${SRA_ID}_2.repaired.fastq" \
+     "${FASTQ_DIR}/${SRA_ID}_singletons.fastq"
 
 echo "✔ Done: ${SRA_ID}"
-
-rm -rf "${TMPDIR}"
+echo "Final files are in ${FASTQ_DIR}"
