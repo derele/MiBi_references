@@ -7,6 +7,7 @@ library(stringr)
 library(lubridate)
 library(taxize)
 library(tidyr)
+library(readxl)
 
 taxa <- readLines("cgMLST.txt")
 
@@ -138,4 +139,8 @@ pull(run_accession) |>
 writeLines("accessions.txt")
 
 
+top6_runs %>%
+  group_by(taxon) %>%
+  summarize(Accessions = paste(run_accession, collapse = ", ")) %>%
+  write_excel_csv2(file = "table_4_prm.csv")
 
